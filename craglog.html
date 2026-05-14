@@ -760,13 +760,18 @@ function renderSessions(){
   Object.entries(byM).sort(([a],[b])=>b.localeCompare(a)).forEach(([m,ss])=>{
     const[y,mo]=m.split('-');const mn=new Date(y,mo-1,1).toLocaleDateString('es-ES',{month:'long',year:'numeric'});
     h+=`<div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:22px;margin-bottom:9px"><div style="font-family:'Playfair Display',serif;font-weight:700;font-size:17px">${mn.charAt(0).toUpperCase()+mn.slice(1)}</div><div class="tsm tm">${ss.length} días</div></div>`;
-    h+='<div class="card" style="padding:0;overflow:hidden"><table class="t"><thead><tr><th>Fecha</th><th>Zona</th><th>Sector</th><th>Vías</th><th>Mejor grado</th><th>Mejor estilo</th></tr></thead><tbody>';
+    h+='<div class="card" style="padding:0;overflow:hidden"><table class="t"><thead><tr><th>Fecha</th><th>Zona</th><th>Sector</th><th>Vías</th><th>Mejor ensayado</th><th>Mejor encadenado</th><th>Metros</th></tr></thead><tbody>';
     ss.forEach(([d,rs])=>{
       const ar=[...new Set(rs.map(r=>r.area).filter(Boolean))].join(', ');
       const secs=[...new Set(rs.map(r=>r.sec).filter(Boolean))].join(', ');
-      const best=rs.filter(r=>r.grade).reduce((b,r)=>gn(r.grade)>gn(b.grade)?r:b,{grade:'',style:''});
-      const bs=bestStyle(rs);
-      h+=`<tr class="crow" onclick="openSM('${d}')"><td class="mono">${fd(d)}</td><td>${E(ar)}</td><td>${E(secs)}</td><td>${rs.length}</td><td>${best.grade?`<span class="badge b-acc">${best.grade}</span>`:'-'}</td><td class="tsm">${E(bs||'-')}</td></tr>`;
+      // Best tried: highest grade any record that day
+      const bestTried=rs.filter(r=>r.grade).reduce((b,r)=>gn(r.grade)>gn(b.grade)?r:b,{grade:''});
+      // Best sent: OS/Flash/RP/PP
+      const SENT_DISP=['On Sight','Flash','Red Point','Pink Point'];
+      const bestSent=rs.filter(r=>r.grade&&SENT_DISP.includes(r.style)).reduce((b,r)=>gn(r.grade)>gn(b.grade)?r:b,{grade:''});
+      // Total length (sum of all longitud)
+      const totalLen=rs.reduce((s,r)=>s+(r.longitud||0),0);
+      h+=`<tr class="crow" onclick="openSM('${d}')"><td class="mono">${fd(d)}</td><td>${E(ar)}</td><td>${E(secs)}</td><td>${rs.length}</td><td>${bestTried.grade?`<span class="badge b-mu">${bestTried.grade}</span>`:'-'}</td><td>${bestSent.grade?`<span class="badge b-acc">${bestSent.grade}</span>`:'-'}</td><td class="mono tsm">${totalLen?totalLen+'m':'-'}</td></tr>`;
     });
     h+='</tbody></table></div>';
   });
@@ -983,11 +988,20 @@ function rp1(el,yr){
 function rp2(el,yr){
   el.innerHTML=`<div class="card"><div class="ctitle">Grado máximo por mes${yr?' — '+yr:''}</div><div class="chw" style="height:280px"><canvas id="r2p"></canvas></div><div id="r2-tbl"></div></div>`;
   setTimeout(()=>{
-    const base=yr?new Date(yr+'-01-01'):new Date(new Date().getFullYear()-1,new Date().getMonth()+1,1);
-    const end=yr?new Date(yr+'-12-31'):new Date();
+    // When yr='', span from first record to today
+    let base,end;
+    if(yr){base=new Date(yr+'-01-01');end=new Date(yr+'-12-31');}else{
+      const allD=S.recs.filter(r=>r.date&&_activeStyles.has(r.style)).map(r=>r.date).sort();
+      base=allD.length?new Date(allD[0].slice(0,7)+'-01'):new Date(new Date().getFullYear(),0,1);
+      end=new Date();
+    }
     const mLabs=[],mData=[];let cur=new Date(base.getFullYear(),base.getMonth(),1);
     while(cur<=end){const ym=cur.toISOString().slice(0,7);mLabs.push(cur.toLocaleDateString('es-ES',{month:'short',year:'2-digit'}));const rs=S.recs.filter(r=>r.date?.startsWith(ym)&&_activeStyles.has(r.style)&&gn(r.grade)>=0);mData.push(rs.length?Math.max(...rs.map(r=>gn(r.grade))):null);cur=new Date(cur.getFullYear(),cur.getMonth()+1,1)}
-    if(RC.r2)RC.r2.destroy();RC.r2=new Chart(document.getElementById('r2p').getContext('2d'),{type:'line',data:{labels:mLabs,datasets:[{data:mData,borderColor:'#B5341E',backgroundColor:'rgba(181,52,30,.1)',spanGaps:true,tension:.3,pointRadius:4,pointBackgroundColor:'#B5341E'}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{ticks:{color:'#9B9689',font:{size:11}},grid:{color:'#E2E0D8'}},y:{ticks:{color:'#9B9689',font:{size:11},callback:v=>GR[v]||''},grid:{color:'#E2E0D8'}}},plugins:{legend:{display:false}}}});
+    const nMonths=mLabs.length;
+    const ptR=nMonths>48?0:nMonths>24?2:4;
+    const fSz=nMonths>60?8:nMonths>36?9:11;
+    const maxTicks=nMonths>60?10:nMonths>36?15:nMonths>24?18:undefined;
+    if(RC.r2)RC.r2.destroy();RC.r2=new Chart(document.getElementById('r2p').getContext('2d'),{type:'line',data:{labels:mLabs,datasets:[{data:mData,borderColor:'#B5341E',backgroundColor:'rgba(181,52,30,.1)',spanGaps:true,tension:.3,pointRadius:ptR,pointBackgroundColor:'#B5341E'}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{ticks:{color:'#9B9689',font:{size:fSz},maxTicksLimit:maxTicks,maxRotation:45},grid:{color:'#E2E0D8'}},y:{ticks:{color:'#9B9689',font:{size:11},callback:v=>GR[v]||''},grid:{color:'#E2E0D8'}}},plugins:{legend:{display:false}}}});
     document.getElementById('r2-tbl').innerHTML=tblRows(mLabs.map((l,i)=>`<tr><td>${l}</td><td>${mData[i]!=null?GR[mData[i]]:'-'}</td></tr>`).join(''),['Mes','Grado máximo']);
   },60);
 }
