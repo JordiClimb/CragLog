@@ -226,7 +226,7 @@ table.t tr:last-child td{border-bottom:none}
     <div class="card csm statbox"><div class="statn" id="d-os">0</div><div class="statl">On Sights</div></div>
   </div>
   <div class="g2 mb12">
-    <div class="card"><div class="ctitle">Pirámide de grados · todos los registros</div><div id="d-pyramid"></div></div>
+    <div class="card"><div class="ctitle">Pirámide de grados · año en curso</div><div id="d-pyramid"></div></div>
     <div class="card"><div class="ctitle">Sesiones recientes</div><div id="drecent"></div></div>
   </div>
   <div class="g2 mb12">
@@ -373,7 +373,7 @@ function uid(){return'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{
 function fd(d){if(!d)return'';return new Date(d+'T12:00:00').toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric'})}
 function fds(d){if(!d)return'';return new Date(d+'T12:00:00').toLocaleDateString('es-ES',{day:'2-digit',month:'short'})}
 function E(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;').replace(/"/g,'&quot;')}
-function enc(s){return encodeURIComponent(s||'')}
+function enc(s){return encodeURIComponent(s||'').replace(/'/g,'%27')}
 
 // ─── STORAGE ────────────────────────────────────────
 function loadL(){
@@ -574,12 +574,12 @@ function renderDash(){
   $('d-total').textContent=statRecs.length;$('d-lines').textContent=uniqueLines;
   $('d-days-yr').textContent=daysYr;$('d-areas').textContent=areas;$('d-os').textContent=os;
   // Pyramid (already filters Indoor internally)
-  renderPyramid('d-pyramid', all);
+  renderPyramid('d-pyramid', statYr); // año en curso
   // Recent sessions
   const sess=sessMap(),dates=Object.keys(sess).sort((a,b)=>b.localeCompare(a)).slice(0,7);
   $('drecent').innerHTML=dates.length?dates.map(d=>{const rs=sess[d];const ar=[...new Set(rs.map(r=>r.area).filter(Boolean))];const best=rs.filter(r=>r.grade).reduce((b,r)=>gn(r.grade)>gn(b.grade)?r:b,{grade:''});return`<div class="srow" onclick="openSM('${d}')"><span class="sdate">${fds(d)}</span><span class="swhere tm">${E(ar.slice(0,2).join(', '))}</span><span class="badge b-acc" style="margin-left:auto">${best.grade||'–'}</span><span class="tsm tm">${rs.length} vías</span></div>`}).join(''):'<p class="tsm tm" style="padding:9px 0">Sin registros. <span style="color:var(--acc);cursor:pointer" onclick="V(\'log\')">Añade tu primera escalada →</span></p>';
   // Top sends: exclude Indoor, only SEND_STYLES
-  const lineMap={};statRecs.forEach(r=>{if(!r.line||!SEND_STYLES.includes(r.style))return;const k=r.area+'|'+r.sec+'|'+r.sub+'|'+r.line;if(!lineMap[k])lineMap[k]={line:r.line,area:r.area,sec:r.sec,sub:r.sub,recs:[]};lineMap[k].recs.push(r)});
+  const lineMap={};statYr.forEach(r=>{if(!r.line||!SEND_STYLES.includes(r.style))return;const k=r.area+'|'+r.sec+'|'+r.sub+'|'+r.line;if(!lineMap[k])lineMap[k]={line:r.line,area:r.area,sec:r.sec,sub:r.sub,recs:[]};lineMap[k].recs.push(r)});
   const topLines=Object.values(lineMap).map(l=>{const d=lineData(l.area,l.sec,l.sub,l.line);return{...l,...d}}).filter(l=>l.grade&&SEND_STYLES.includes(l.style)).sort((a,b)=>gn(b.grade)-gn(a.grade)||(STYLE_RANK[a.style]??99)-(STYLE_RANK[b.style]??99)).slice(0,8);
   $('d-topsends').innerHTML=topLines.length?topLines.map(l=>`<div class="top-send"><span class="grade-pill">${l.grade}</span><div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${E(l.line)}</div><div class="tsm tm">${E(l.area)} › ${E(l.sec)} · ${E(l.style||'–')}</div></div></div>`).join(''):'<p class="tsm tm">Sin encadenamientos en OS/Flash/RP</p>';
   // Progress chart (exclude Indoor)
