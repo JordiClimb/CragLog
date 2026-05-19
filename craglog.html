@@ -407,7 +407,22 @@ function saveConfig(){
 const GH='https://api.github.com';
 function ghH(){return{'Authorization':'token '+S.cfg.token,'Accept':'application/vnd.github.v3+json','Content-Type':'application/json'}}
 async function ghR(p){if(!S.cfg)return null;try{const r=await fetch(`${GH}/repos/${S.cfg.owner}/${S.cfg.repo}/contents/${p}?ref=${S.cfg.branch}`,{headers:ghH()});if(r.status===404)return null;const d=await r.json();S.shas[p]=d.sha;return JSON.parse(decodeURIComponent(escape(atob(d.content.replace(/\n/g,'')))))}catch(e){return null}}
-async function ghW(p,data,msg){if(!S.cfg)return false;try{const txt=unescape(encodeURIComponent(JSON.stringify(data,null,2)));const body={message:msg||'Update',content:btoa(txt),branch:S.cfg.branch};if(S.shas[p])body.sha=S.shas[p];const r=await fetch(`${GH}/repos/${S.cfg.owner}/${S.cfg.repo}/contents/${p}`,{method:'PUT',headers:ghH(),body:JSON.stringify(body)});const d=await r.json();if(d.content)S.shas[p]=d.content.sha;return r.ok}catch(e){return false}}
+async function ghW(p,data,msg){
+  if(!S.cfg)return false;
+  // Always fetch current SHA before writing — prevents stale-SHA conflicts on mobile page reloads
+  try{
+    const chk=await fetch(`${GH}/repos/${S.cfg.owner}/${S.cfg.repo}/contents/${p}?ref=${S.cfg.branch}`,{headers:ghH()});
+    if(chk.ok){const cd=await chk.json();S.shas[p]=cd.sha;}
+    else if(chk.status===404){delete S.shas[p];}
+  }catch(e){}
+  try{
+    const txt=unescape(encodeURIComponent(JSON.stringify(data,null,2)));
+    const body={message:msg||'Update',content:btoa(txt),branch:S.cfg.branch};
+    if(S.shas[p])body.sha=S.shas[p];
+    const r=await fetch(`${GH}/repos/${S.cfg.owner}/${S.cfg.repo}/contents/${p}`,{method:'PUT',headers:ghH(),body:JSON.stringify(body)});
+    const d=await r.json();if(d.content)S.shas[p]=d.content.sha;return r.ok;
+  }catch(e){return false}
+}
 async function testConn(){
   if(!S.cfg)return toast('Primero guarda la configuración','error');
   sd('sy');const el=document.getElementById('cst');el.style.display='flex';el.className='cst id';el.textContent='Conectando...';
@@ -606,19 +621,27 @@ function renderHM(el,days){
 
 // ─── WIZARD ─────────────────────────────────────────
 function initWZ(keepLoc){
-  if(!keepLoc)Object.assign(WZ,{step:1,date:td(),area:'',sec:'',sub:'',line:'',grade:'',perc:'',style:'',punt:'',par:'',longitud:'',com:''});
+  if(!keepLoc)Object.assign(WZ,{fromLine:false,step:1,date:td(),area:'',sec:'',sub:'',line:'',grade:'',perc:'',style:'',punt:'',par:'',longitud:'',com:''});
   else{WZ.step=3;WZ.line='';WZ.grade='';WZ.perc='';WZ.style='';WZ.punt='';WZ.par='';WZ.longitud='';WZ.com=''}
   renderWZ();
 }
 function initWZCL(){WZ.step=2;WZ.sec='';WZ.sub='';WZ.line='';renderWZ()}
 function renderWZ(){
   const labs=['Fecha','Zona / Sector','Vía','Detalles'];
-  document.getElementById('wzsteps').innerHTML=labs.map((l,i)=>{const n=i+1;let c='wzst';if(n<WZ.step)c+=' dn';if(n===WZ.step)c+=' ac';return(i>0?'<div class="wzl"></div>':'')+'<div class="'+c+'"><div class="wzn">'+(n<WZ.step?'✓':n)+'</div><span>'+l+'</span></div>'}).join('');
+  document.getElementById('wzsteps').innerHTML=labs.map((l,i)=>{
+    const n=i+1;let c='wzst';
+    // When fromLine, steps 2+3 are always "done" (pre-filled from the line context)
+    const done=WZ.fromLine?(n<WZ.step||n===2||n===3):n<WZ.step;
+    if(done)c+=' dn';if(n===WZ.step)c+=' ac';
+    return(i>0?'<div class="wzl"></div>':'')+'<div class="'+c+'"><div class="wzn">'+(done?'✓':n)+'</div><span>'+l+'</span></div>';
+  }).join('');
   const el=document.getElementById('wzbody');
   if(WZ.step===1)wzS1(el);else if(WZ.step===2)wzS2(el);else if(WZ.step===3)wzS3(el);else wzS4(el);
 }
 function wzS1(el){
-  el.innerHTML=`<div class="wzt">¿Cuándo?</div><div class="mb12"><label class="fl">Fecha</label><input type="date" id="wd" value="${WZ.date}" style="max-width:200px" onchange="WZ.date=this.value"></div><div class="btgrp"><button class="btn btp" onclick="wzGo(2)">Continuar →</button></div>`;
+  const nextStep=WZ.fromLine?4:2;
+  const locInfo=WZ.fromLine?`<div class="crumb mb12"><span class="crumb-m">📍 ${E(WZ.area+' › '+WZ.sec+' › '+WZ.sub+' › '+WZ.line)}</span></div>`:'';
+  el.innerHTML=`<div class="wzt">¿Cuándo?</div>${locInfo}<div class="mb12"><label class="fl">Fecha</label><input type="date" id="wd" value="${WZ.date}" style="max-width:200px" onchange="WZ.date=this.value"></div><div class="btgrp"><button class="btn btp" onclick="WZ.date=document.getElementById('wd').value;wzGo(${nextStep})">Continuar →</button></div>`;
 }
 function wzS2(el){
   const ar=getAreas(),ss=WZ.area?getSecs(WZ.area):[],sb=WZ.area&&WZ.sec?getSubs(WZ.area,WZ.sec):[];
@@ -667,7 +690,8 @@ function wzS4(el){
   h+=`<div class="mb10"><label class="fl">Paradas en intento <span class="tsm" style="color:var(--acc)">*nuevo</span></label><input type="number" id="wpa" value="${E(WZ.par)}" min="0" placeholder="0"></div>`;
   h+=`<div class="mb10"><label class="fl">Longitud (m)</label><input type="number" id="wln" value="${E(preLong)}" min="1" placeholder="20"></div>`;
   h+=`</div><div class="mb10"><label class="fl">Comentarios <span class="tsm" style="color:var(--acc)">*nuevo</span></label><textarea id="wco" rows="3" placeholder="Sensaciones, condiciones, notas...">${E(WZ.com)}</textarea></div>`;
-  h+=`<div class="btgrp"><button class="btn bts" onclick="wzGo(3)">← Atrás</button><button class="btn btacc btlg" onclick="saveRec()">✓ Guardar registro</button></div>`;
+  const backStep=WZ.fromLine?1:3;
+  h+=`<div class="btgrp"><button class="btn bts" onclick="wzGo(${backStep})">← Atrás</button><button class="btn btacc btlg" onclick="saveRec()">✓ Guardar registro</button></div>`;
   el.innerHTML=h;
 }
 function wzGo(s){WZ.step=s;renderWZ()}
@@ -861,13 +885,15 @@ async function applyRenameArea(nE){
 
 // SECTOR
 let _sdState={aE:'',sE:'',sort:'grade',dir:'desc',q:'',subF:''};
-function openSD(aE,sE,sort,dir,q,subF){
-  sort=sort||'grade';dir=dir||'desc';q=q||'';subF=subF||'';_sdState={aE,sE,sort,dir,q,subF};
+function openSD(aE,sE,sort,dir,q,subF,snds){
+  sort=sort||'grade';dir=dir||'desc';q=q||'';subF=subF||'';snds=!!snds;_sdState={aE,sE,sort,dir,q,subF,snds};
   const area=decodeURIComponent(aE),sec=decodeURIComponent(sE);
   const lM={};S.recs.filter(r=>r.area===area&&r.sec===sec).forEach(r=>{const ln=r.line;if(!ln)return;const sub=r.sub||'';const k=ln+'|'+sub;if(!lM[k])lM[k]={line:ln,sub,recs:[]};lM[k].recs.push(r)});
   const allSubs=[...new Set(S.recs.filter(r=>r.area===area&&r.sec===sec).map(r=>r.sub||'').filter(Boolean))].sort();
   let lines=Object.values(lM);
   if(subF)lines=lines.filter(l=>l.sub===subF);
+  const SENT_SET=['On Sight','Flash','Red Point','Pink Point'];
+  if(snds)lines=lines.filter(l=>l.recs.some(r=>SENT_SET.includes(r.style)));
   if(q)lines=lines.filter(l=>l.line.toLowerCase().includes(q.toLowerCase()));
   lines.sort((a,b)=>{
     const da=lineData(area,sec,a.sub,a.line),db=lineData(area,sec,b.sub,b.line);
@@ -879,7 +905,7 @@ function openSD(aE,sE,sort,dir,q,subF){
     return 0;
   });
   const arw=f=>f===sort?(dir==='desc'?' ↓':' ↑'):'';
-  const th=(f,l)=>`<th class="srt" onclick="openSD('${aE}','${sE}','${f}','${sort===f&&dir==='desc'?'asc':'desc'}','${q}','${subF}')">${l}${arw(f)}</th>`;
+  const th=(f,l)=>`<th class="srt" onclick="openSD('${aE}','${sE}','${f}','${sort===f&&dir==='desc'?'asc':'desc'}','${q}','${subFE}',${snds})">${l}${arw(f)}</th>`;
   const subFE=subF.replace(/'/g,"\\'");
   const _gk=enc(area+'|'+sec),_sg=S.geo.sectors[area+'|'+sec]||{};let h=`<div class="flxb mb8"><div class="mtitle" style="margin-bottom:0">🧗 ${E(sec)}</div><div style="display:flex;gap:6px"><button class="btn btn-ed btsm" onclick="editGeoSector('${_gk}','${aE}','${sE}')">✎ Coord. mapa</button><button class="btn btn-warn btsm" onclick="renameSector('${aE}','${sE}')">✎ Renombrar</button></div></div>`;
   h+=`<div class="tm tsm mb10">📍 ${E(area)}</div>`;
@@ -888,7 +914,10 @@ function openSD(aE,sE,sort,dir,q,subF){
     allSubs.forEach(sub=>{h+=`<div class="schip${subF===sub?' on':''}" style="display:flex;align-items:center;gap:4px" onclick="openSD('${aE}','${sE}','${sort}','${dir}','${q}','${sub.replace(/'/g,"\\'")}')"><span onclick="event.stopPropagation();renameSubsector('${aE}','${sE}','${enc(sub)}')" title="Renombrar" style="opacity:.5;font-size:9px;padding:0 2px;border-radius:2px;background:rgba(0,0,0,.08)">✎</span>${E(sub)}</div>`});
     h+=`</div>`;
   }
-  h+=`<div class="filter-bar mb10"><input type="text" placeholder="Buscar vía..." value="${E(q)}" onchange="openSD('${aE}','${sE}','${sort}','${dir}',this.value,'${subFE}')" style="max-width:200px"><select onchange="openSD('${aE}','${sE}',this.value,'${dir}','${q}','${subFE}')" style="width:auto"><option value="grade"${sort==='grade'?' selected':''}>Grado</option><option value="nombre"${sort==='nombre'?' selected':''}>Nombre</option><option value="fecha"${sort==='fecha'?' selected':''}>Fecha</option><option value="estilo"${sort==='estilo'?' selected':''}>Mejor estilo</option><option value="long"${sort==='long'?' selected':''}>Longitud</option></select><select onchange="openSD('${aE}','${sE}','${sort}',this.value,'${q}','${subFE}')" style="width:auto"><option value="desc"${dir==='desc'?' selected':''}>↓ Desc.</option><option value="asc"${dir==='asc'?' selected':''}>↑ Asc.</option></select><span class="tsm tm">${lines.length} vías</span></div>`;
+  // Sends-only toggle
+  const sndsE=snds?'true':'false';
+  h+=`<div class="style-chips mb10"><div class="schip${!snds?' on':''}" onclick="openSD('${aE}','${sE}','${sort}','${dir}','${q}','${subFE}',false)">Todas las vías</div><div class="schip${snds?' on':''}" onclick="openSD('${aE}','${sE}','${sort}','${dir}','${q}','${subFE}',true)">Solo encadenadas</div></div>`;
+  h+=`<div class="filter-bar mb10"><input type="text" placeholder="Buscar vía..." value="${E(q)}" onchange="openSD('${aE}','${sE}','${sort}','${dir}',this.value,'${subFE}',${snds})" style="max-width:200px"><select onchange="openSD('${aE}','${sE}',this.value,'${dir}','${q}','${subFE}',${snds})" style="width:auto"><option value="grade"${sort==='grade'?' selected':''}>Grado</option><option value="nombre"${sort==='nombre'?' selected':''}>Nombre</option><option value="fecha"${sort==='fecha'?' selected':''}>Fecha</option><option value="estilo"${sort==='estilo'?' selected':''}>Mejor estilo</option><option value="long"${sort==='long'?' selected':''}>Longitud</option></select><select onchange="openSD('${aE}','${sE}','${sort}',this.value,'${q}','${subFE}',${snds})" style="width:auto"><option value="desc"${dir==='desc'?' selected':''}>↓ Desc.</option><option value="asc"${dir==='asc'?' selected':''}>↑ Asc.</option></select><span class="tsm tm">${lines.length} vías</span></div>`;
   h+=`<table class="t"><thead><tr>${th('nombre','Vía')}${th('grade','Grado')}${th('estilo','Mejor estilo')}<th>Subsector</th><th>Percepción</th><th>Punt.</th>${th('long','Long.')}${th('fecha','Fecha')}<th>N.°</th></tr></thead><tbody>`;
   lines.forEach(({line,sub,recs:rs})=>{const d=lineData(area,sec,sub,line);h+=`<tr class="crow" onclick="openLD('${aE}','${sE}','${enc(sub)}','${enc(line)}')"><td style="font-weight:500">${E(line)}</td><td class="mono">${E(d.grade||'–')}</td><td>${E(d.style||'–')}</td><td class="tm tsm">${E(sub||'–')}</td><td class="tsm">${E(d.perc||'–')}</td><td class="tsm">${E(d.punt||'–')}</td><td class="mono">${d.longitud?d.longitud+'m':'–'}</td><td class="tsm tm">${fds(d.date)}</td><td class="tm">${rs.length}</td></tr>`});
   h+=`</tbody></table><div class="btgrp mt10"><button class="btn btg" onclick="openAD('${aE}')">← Volver</button><button class="btn btg" onclick="CM()">Cerrar</button></div>`;
@@ -941,16 +970,36 @@ async function applyRenameSub(aE,sE,subE){
 function openLD(aE,sE,subE,lnE){
   const area=decodeURIComponent(aE),sec=decodeURIComponent(sE),sub=decodeURIComponent(subE),ln=decodeURIComponent(lnE);
   const hist=getHist(area,sec,sub,ln);const d=lineData(area,sec,sub,ln);
-  let h=`<div class="mtitle">🧗 ${E(ln)}</div><div class="tm tsm mb12">${E(area)} › ${E(sec)}${sub?' › '+E(sub):''}</div>`;
+  // Store in global so registerFromLine() can access without encoding issues
+  window._ldCtx={area,sec,sub,ln};
+  let h=`<div class="flxb mb8"><div class="mtitle" style="margin-bottom:0">🧗 ${E(ln)}</div><button class="btn btacc btsm" onclick="registerFromLine()">+ Registrar ascenso</button></div>`;
+  h+=`<div class="tm tsm mb12">${E(area)} › ${E(sec)}${sub?' › '+E(sub):''}</div>`;
   if(hist.length){
     h+=`<div class="g4 mb12"><div class="card csm statbox"><div class="statn">${hist.length}</div><div class="statl">Ascensiones</div></div><div class="card csm statbox"><div class="statn">${E(d.grade||'?')}</div><div class="statl">Grado actual</div></div><div class="card csm statbox"><div class="statn" style="font-size:17px;padding-top:8px">${E(d.style||'–')}</div><div class="statl">Mejor estilo</div></div><div class="card csm statbox"><div class="statn">${hist.filter(r=>r.style==='On Sight').length}</div><div class="statl">On Sight</div></div></div>`;
     if(d.punt||d.perc||d.longitud)h+=`<div class="tsm tm mb10">${[d.punt?'⭐ '+d.punt:'',d.perc?'💬 '+d.perc:'',d.longitud?'📏 '+d.longitud+'m':''].filter(Boolean).join(' · ')}</div>`;
     h+=`<table class="t"><thead><tr><th>Fecha</th><th>Grado</th><th>Percepción</th><th>Estilo</th><th>Paradas</th><th>Long.</th><th>Punt.</th></tr></thead><tbody>`;
     hist.forEach(r=>{h+=`<tr class="crow" onclick="editRec('${r.id}')"><td>${fd(r.date)}</td><td class="mono">${E(r.grade||'–')}</td><td>${E(r.perc||'–')}</td><td>${E(r.style||'–')}</td><td>${r.par??'–'}</td><td>${r.longitud?r.longitud+'m':'–'}</td><td>${E(r.punt||'–')}</td></tr>`;if(r.com)h+=`<tr><td colspan="7" class="tm tsm tit" style="padding-top:1px;padding-bottom:7px">💬 ${E(r.com)}</td></tr>`});
     h+=`</tbody></table><p class="tsm tm mt6">Clic en una fila para editar</p>`;
-  }else h+='<div class="empty" style="padding:22px 0"><p>Sin historial</p></div>';
+  }else h+='<div class="empty" style="padding:22px 0"><p>Sin historial. <span style="color:var(--acc);cursor:pointer" onclick="registerFromLine()">Registrar el primero →</span></p></div>';
   h+=`<div class="btgrp mt10"><button class="btn btg" onclick="openSD('${aE}','${sE}')">← Volver</button><button class="btn btg" onclick="CM()">Cerrar</button></div>`;
   OM(h);
+}
+// Called from openLD button — skips to step 4 pre-filled with the line's location + current data
+function registerFromLine(){
+  const ctx=window._ldCtx;if(!ctx)return;
+  const d=lineData(ctx.area,ctx.sec,ctx.sub,ctx.ln);
+  Object.assign(WZ,{
+    fromLine:true,  // flag: skip steps 2+3, show them as done
+    step:1,date:td(),
+    area:ctx.area,sec:ctx.sec,sub:ctx.sub,line:ctx.ln,
+    // Pre-fill from lineData (grade, perc, punt, longitud) — editable in step 4
+    grade:d.grade||'',perc:d.perc||'',punt:d.punt||'',longitud:d.longitud?String(d.longitud):'',
+    // New each time
+    style:'',par:'',com:''
+  });
+  window._ldCtx=null;
+  CM();
+  V('log');
 }
 
 // ─── REPORTS ────────────────────────────────────────
@@ -1045,7 +1094,7 @@ function renderSettings(){if(S.cfg){document.getElementById('ct').value=S.cfg.to
 function exportXL(){
   if(!window.XLSX)return toast('Librería XLSX no disponible. Recarga la página.','error');
   const wb=XLSX.utils.book_new();
-  const rows=S.recs.map(r=>({'Fecha':r.date,'Línea':r.line,'Grado':r.grade,'Percepción':r.perc,'Estilo':r.style,'Puntuación':r.punt,'Paradas en intento':r.par,'Longitud':r.longitud,'Subsector':r.sub,'Sector':r.sec,'Area':r.area,'Comentarios':r.com}));
+  const rows=S.recs.map(r=>({'ID':r.id,'Fecha':r.date,'Línea':r.line,'Grado':r.grade,'Percepción':r.perc,'Estilo':r.style,'Puntuación':r.punt,'Paradas en intento':r.par,'Longitud':r.longitud,'Subsector':r.sub,'Sector':r.sec,'Area':r.area,'Comentarios':r.com}));
   XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),'Deportiva');
   XLSX.writeFile(wb,'CragLog_Export_'+td().replace(/-/g,'')+'.xlsx');toast('Excel exportado','success');
 }
@@ -1072,12 +1121,17 @@ function importXL(input){
       document.getElementById('ist').textContent='Procesando '+rows.length+' registros...';
       if(replaceMode){const sample=S.recs.find(r=>r.id==='indoor-sample-001');S.recs=sample?[sample]:[]}
       let imported=0;
-      const keys=new Set(S.recs.map(r=>`${r.date}|${r.area}|${r.line}|${r.grade||''}|${r.style||''}`));
+      // Primary dedup: by ID (UUID in 'ID' col — present in exports from this app)
+      // Fallback dedup: field-based for old Excel files without ID column
+      const existingIds=new Set(S.recs.map(r=>r.id).filter(Boolean));
+      const fallbackKeys=new Set(S.recs.map(r=>`${r.date}|${r.area}|${r.sec}|${r.line}|${r.grade||''}|${r.style||''}`));
       const pd=v=>{if(!v)return'';if(v instanceof Date)return v.toISOString().split('T')[0];return String(v).slice(0,10)};
       const normStyle=s=>{if(!s)return s;const map={'Proyecto':'Go','Project':'Go'};return map[s]||s};
       rows.forEach((row,i)=>{
         document.getElementById('ifl2').style.width=((i/rows.length)*100)+'%';
-        const rec={id:uid(),
+        const importedId=(row['ID']||'').toString().trim();
+        const rec={
+          id:importedId||uid(),
           date:pd(row['Date']||row['Data']||row['Fecha']),
           line:row['Línea']||row['Line']||row['Vía']||'',
           grade:row['Grade']||row['Grado']||'',
@@ -1089,8 +1143,16 @@ function importXL(input){
           sub:row['Subsector']||'',sec:row['Sector']||'',
           area:row['Area']||row['Zona']||'',com:row['Comentarios']||row['Comentaris']||''};
         if(!rec.date&&!rec.line)return;
-        const k=`${rec.date}|${rec.area}|${rec.line}|${rec.grade||''}|${rec.style||''}`;
-        if(!keys.has(k)){S.recs.push(rec);imported++;keys.add(k)}
+        if(importedId){
+          // Exported from this app: ID is the source of truth
+          if(existingIds.has(importedId))return;
+          S.recs.push(rec);imported++;existingIds.add(importedId);
+        }else{
+          // Old file without ID column: best-effort field dedup
+          const fk=`${rec.date}|${rec.area}|${rec.sec}|${rec.line}|${rec.grade||''}|${rec.style||''}`;
+          if(fallbackKeys.has(fk))return;
+          S.recs.push(rec);imported++;fallbackKeys.add(fk);
+        }
       });
       document.getElementById('ifl2').style.width='100%';
       document.getElementById('ist').textContent=`✓ ${imported} registros importados (${rows.length-imported} duplicados exactos ignorados)`;
